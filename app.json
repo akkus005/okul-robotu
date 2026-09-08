@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Okul Kurye Robotu",
+    "slug": "okul-kurye-robotu",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.akkus.okulkuryerobotu",
+      "permissions": [
+        "CAMERA",
+        "HIGH_SAMPLING_RATE_SENSORS"
+      ]
+    }
+  }
+}
