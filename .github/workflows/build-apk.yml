@@ -25,14 +25,13 @@ jobs:
         with:
           node-version: 18
 
-      - name: Install EAS CLI
-        run: npm install -g eas-cli
-
       - name: Install Dependencies
         run: npm install
 
-      - name: Clean and Prebuild Android
-        run: npx expo prebuild --platform android --clean
+      - name: Regenerate Android Folder
+        run: |
+          rm -rf android
+          npx expo prebuild --platform android
 
       - name: Build APK with Gradle
         run: |
