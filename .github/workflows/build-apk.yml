@@ -31,8 +31,8 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build Android App (Prebuild)
-        run: npx expo prebuild --platform android
+      - name: Clean and Prebuild Android
+        run: npx expo prebuild --platform android --clean
 
       - name: Build APK with Gradle
         run: |
