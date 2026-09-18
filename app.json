@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "KuryeRobot",
-    "slug": "kurye-robot",
+    "slug": "okul-robotu",
     "owner": "akkus005s-team",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -23,11 +23,6 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "47d51e3b-922c-474c-9ee9-af57d7316c00"
-      }
     }
   }
 }
