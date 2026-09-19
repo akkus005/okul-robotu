@@ -1,302 +1,221 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  StyleSheet, Text, View, TextInput, TouchableOpacity, 
-  ScrollView, Alert, SafeAreaView, ActivityIndicator 
-} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Gyroscope } from 'expo-sensors';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, Vibration } from 'react-native';
+
+const ESP32_WS_URL = 'ws://192.168.4.1:81';
 
 export default function App() {
-  const [screen, setScreen] = useState('LOGIN');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-
-  const [users, setUsers] = useState([]);
-  const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [queue, setQueue] = useState([]);
-  const [currentTask, setCurrentTask] = useState(null);
-  const [robotLocation, setRobotLocation] = useState('Şarj İstasyonu (Zemin Kat)');
+  const [screen, setScreen] = useState('LOGIN'); 
   
-  const [startPoint, setStartPoint] = useState('');
-  const [endPoint, setEndPoint] = useState('');
-
-  const [gyroData, setGyroData] = useState({ x: 0, y: 0, z: 0 });
-  const [tileCount, setTileCount] = useState(0);
+  const [users, setUsers] = useState([
+    { username: 'admin', password: '1', role: 'ADMIN' },
+    { username: 'ruhi', password: '123', role: 'ADMIN' }
+  ]);
+  
+  const [loginUser, setLoginUser] = useState('');
+  const [loginPass, setLoginPass] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newUserPass, setNewUserPass] = useState('');
+  
+  const [ws, setWs] = useState(null);
+  const [connected, setConnected] = useState(false);
+  const [telemetry, setTelemetry] = useState({ speed: 0, distance: 0, battery: 100, status: 'IDLE', lockState: 'LOCKED' });
+  const [robotArrived, setRobotArrived] = useState(false);
 
   useEffect(() => {
-    loadUsers();
+    connectWebSocket();
+    return () => { if (ws) ws.close(); };
   }, []);
 
-  useEffect(() => {
-    let subscription;
-    if (screen === 'ROBOT') {
-      Gyroscope.setUpdateInterval(100);
-      subscription = Gyroscope.addListener(data => setGyroData(data));
-    }
-    return () => subscription && subscription.remove();
-  }, [screen]);
+  const connectWebSocket = () => {
+    const websocket = new WebSocket(ESP32_WS_URL);
+    
+    websocket.onopen = () => setConnected(true);
+    websocket.onclose = () => setConnected(false);
+    websocket.onerror = () => setConnected(false);
+    
+    websocket.onmessage = (e) => {
+      try {
+        // ESP32 Telemetri Paketi: {"speed": 2.5, "distance": 120, "battery": 90, "status": "ARRIVED", "lockState": "LOCKED"}
+        const data = JSON.parse(e.data);
+        setTelemetry(data);
 
-  const loadUsers = async () => {
-    try {
-      const storedUsers = await AsyncStorage.getItem('@users');
-      if (storedUsers) setUsers(JSON.parse(storedUsers));
-    } catch (e) {
-      console.log('Kullanıcı yükleme hatası', e);
+        // ROBOT HEDEFE VARDIĞINDA BİLDİRİM TETİKLE
+        if (data.status === 'ARRIVED' && !robotArrived) {
+          setRobotArrived(true);
+          Vibration.vibrate([500, 500, 500]); // Telefona titreşim verir
+          Alert.alert("🔔 KARGO ULAŞTI!", "Robot kapınıza vardı. Aşağıdaki butondan kapağı açıp belgeleri alabilirsiniz.");
+        }
+      } catch (err) {
+        console.log("Telemetri ayrıştırma hatası");
+      }
+    };
+    setWs(websocket);
+  };
+
+  const sendCommand = (cmd) => {
+    if (ws && connected) {
+      ws.send(JSON.stringify({ command: cmd }));
+    } else {
+      Alert.alert('Bağlantı Hatası', 'Robota bağlı değilsiniz!');
     }
   };
 
   const handleLogin = () => {
-    const userClean = username.trim().toLowerCase();
-    
-    if (userClean === 'admin' && password === 'ruhi1234') {
-      setScreen('ADMIN');
-    } else if (userClean === 'robot' && password === 'ruhi1234') {
-      setScreen('ROBOT');
+    const user = users.find(u => u.username === loginUser && u.password === loginPass);
+    if (user) {
+      setScreen(user.role);
+      setLoginUser('');
+      setLoginPass('');
     } else {
-      const found = users.find(u => u.username.toLowerCase() === userClean && u.password === password);
-      if (found) {
-        setScreen('USER');
-      } else {
-        Alert.alert('Hata', 'Geçersiz Kullanıcı Adı veya Şifre!');
-      }
+      Alert.alert('Hata', 'Kullanıcı adı veya şifre yanlış!');
     }
   };
 
-  const handleAddUser = async () => {
-    if (!newUsername || !newPassword) {
-      Alert.alert('Hata', 'Kullanıcı adı ve şifre boş olamaz!');
-      return;
+  const handleAddUser = () => {
+    if (newUsername && newUserPass) {
+      setUsers([...users, { username: newUsername, password: newUserPass, role: 'TEACHER' }]);
+      Alert.alert('Başarılı', `${newUsername} isimli öğretmen kaydedildi.`);
+      setNewUsername('');
+      setNewUserPass('');
     }
-    const updatedUsers = [...users, { username: newUsername, password: newPassword }];
-    setUsers(updatedUsers);
-    await AsyncStorage.setItem('@users', JSON.stringify(updatedUsers));
-    setNewUsername('');
-    setNewPassword('');
-    Alert.alert('Başarılı', `${newUsername} kullanıcısı sisteme eklendi.`);
   };
 
-  const handleCreateRequest = () => {
-    if (!startPoint || !endPoint) {
-      Alert.alert('Hata', 'Lütfen Başlangıç ve Bitiş noktalarını giriniz!');
-      return;
-    }
-    const newTask = {
-      id: Date.now(),
-      sender: username,
-      start: startPoint,
-      end: endPoint,
-      status: 'Sırada'
-    };
-    setQueue([...queue, newTask]);
-    if (!currentTask) setCurrentTask(newTask);
-    Alert.alert('İşlem Başarılı', 'Talebiniz kuyruğa eklendi.');
-    setStartPoint('');
-    setEndPoint('');
-  };
-
-  const handleCompleteCurrentTask = (manual = false) => {
-    Alert.alert('Bildirim', manual ? 'Alıcı teslimatı onayladı.' : 'Kamera haznenin boşaldığını tespit etti. Sıradaki göreve geçiliyor.');
-    const remainingQueue = queue.slice(1);
-    setQueue(remainingQueue);
-    setCurrentTask(remainingQueue.length > 0 ? remainingQueue[0] : null);
-  };
-
-  const triggerElevatorFingerbot = async () => {
-    console.log('[WI-FI ASANSÖR]: Fingerbot tetiklendi, düğmeye basılıyor...');
-    Alert.alert('Asansör', 'Wi-Fi sinyali gönderildi, asansör çağrılıyor.');
-  };
-
+  // --- EKRAN 1: GİRİŞ ---
   if (screen === 'LOGIN') {
     return (
-      <SafeAreaView style={styles.container}>
-        <Text style={styles.headerTitle}>OKUL KURYE ROBOTU</Text>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Sistem Girişi</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Kullanıcı Adı (admin, robot veya adınız)"
-            placeholderTextColor="#888"
-            value={username}
-            onChangeText={setUsername}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Şifre"
-            placeholderTextColor="#888"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
-          <TouchableOpacity style={styles.primaryBtn} onPress={handleLogin}>
-            <Text style={styles.btnText}>Giriş Yap</Text>
-          </TouchableOpacity>
+      <View style={styles.container}>
+        <Text style={styles.headerTitle}>4WD OTONOM KURYE</Text>
+        <Text style={styles.subTitle}>Sistem Girişi</Text>
+        
+        <View style={styles.statusBox}>
+          <Text style={{ color: connected ? '#00FF00' : '#FF0000', fontWeight: 'bold' }}>
+            {connected ? 'ROBOT BAĞLANTISI AKTİF' : 'ROBOT BAĞLANTISI YOK'}
+          </Text>
         </View>
-      </SafeAreaView>
+
+        <TextInput style={styles.input} placeholder="Kullanıcı Adı" onChangeText={setLoginUser} value={loginUser} />
+        <TextInput style={styles.input} placeholder="Şifre" secureTextEntry onChangeText={setLoginPass} value={loginPass} />
+        
+        <TouchableOpacity style={styles.btnPrimary} onPress={handleLogin}>
+          <Text style={styles.btnText}>SİSTEME GİRİŞ YAP</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
+  // --- EKRAN 2: ÖĞRETMEN MODU (Varış Bildirimli & Mıknatıs Kilit Açmalı) ---
+  if (screen === 'TEACHER') {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.headerTitle}>ÖĞRETMEN MODU</Text>
+        
+        {/* ROBOT DURUM PANOSU */}
+        <View style={styles.statusCard}>
+          <Text style={styles.cardTitle}>ROBOT DURUMU:</Text>
+          <Text style={[styles.cardStatus, { color: robotArrived ? '#00FF00' : '#f39c12' }]}>
+            {robotArrived ? '📍 KAPINIZDA (TESLİMATA HAZIR)' : '➡️ YOLDA / BEKLEMEDE'}
+          </Text>
+        </View>
+
+        <TouchableOpacity style={styles.btnAction} onPress={() => { setRobotArrived(false); sendCommand('CALL_ROBOT'); }}>
+          <Text style={styles.btnText}>🤖 ROBOTU YANIMA ÇAĞIR</Text>
+        </TouchableOpacity>
+
+        {/* MIKNATISLI KİLİT AÇMA BUTONU (Robot varınca aktifleşir/kullanılır) */}
+        <TouchableOpacity 
+          style={[styles.btnAction, { backgroundColor: robotArrived ? '#8e44ad' : '#7f8c8d' }]} 
+          onPress={() => sendCommand('UNLOCK_CARGO')}
+        >
+          <Text style={styles.btnText}>🔓 KİLİDİ AÇ (BELGELERİ AL)</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.btnAction, { backgroundColor: '#27ae60' }]} onPress={() => sendCommand('LOCK_CARGO')}>
+          <Text style={styles.btnText}>🔒 KİLİTLEN VE GÖNDER</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.btnBack} onPress={() => setScreen('LOGIN')}>
+          <Text style={styles.btnText}>ÇIKIŞ YAP</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // --- EKRAN 3: ADMİN MODU ---
   if (screen === 'ADMIN') {
     return (
-      <SafeAreaView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.headerTitle}>Admin Kontrol Paneli</Text>
-          
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>+ Yeni Öğretmen / Kullanıcı Ekle</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Yeni Kullanıcı Adı"
-              placeholderTextColor="#888"
-              value={newUsername}
-              onChangeText={setNewUsername}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Yeni Şifre"
-              placeholderTextColor="#888"
-              secureTextEntry
-              value={newPassword}
-              onChangeText={setNewPassword}
-            />
-            <TouchableOpacity style={styles.successBtn} onPress={handleAddUser}>
-              <Text style={styles.btnText}>Kullanıcıyı Kaydet</Text>
-            </TouchableOpacity>
-          </View>
+      <View style={styles.container}>
+        <Text style={styles.headerTitle}>ADMİN KONTROL PANELİ</Text>
+        
+        <View style={styles.telemetryBox}>
+          <Text style={styles.telemetryText}>Hız: {telemetry.speed} km/s</Text>
+          <Text style={styles.telemetryText}>Mesafe: {telemetry.distance} cm</Text>
+          <Text style={styles.telemetryText}>Pil: %{telemetry.battery}</Text>
+        </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Robot Anlık Durum</Text>
-            <Text style={styles.infoText}>Konum: {robotLocation}</Text>
-            <Text style={styles.infoText}>Aktif Görev: {currentTask ? `${currentTask.start} -> ${currentTask.end}` : 'Beklemede'}</Text>
-            <Text style={styles.infoText}>Kuyrukta Bekleyen: {queue.length} Görev</Text>
+        <View style={styles.dpad}>
+          <TouchableOpacity style={styles.dpadBtn} onPressIn={() => sendCommand('FORWARD')} onPressOut={() => sendCommand('STOP')}><Text style={styles.btnText}>İLERİ</Text></TouchableOpacity>
+          <View style={styles.dpadRow}>
+            <TouchableOpacity style={styles.dpadBtn} onPressIn={() => sendCommand('LEFT')} onPressOut={() => sendCommand('STOP')}><Text style={styles.btnText}>SOL</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.dpadBtn, styles.stopBtn]} onPress={() => sendCommand('STOP')}><Text style={styles.btnText}>DUR</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.dpadBtn} onPressIn={() => sendCommand('RIGHT')} onPressOut={() => sendCommand('STOP')}><Text style={styles.btnText}>SAĞ</Text></TouchableOpacity>
           </View>
+          <TouchableOpacity style={styles.dpadBtn} onPressIn={() => sendCommand('BACK')} onPressOut={() => sendCommand('STOP')}><Text style={styles.btnText}>GERİ</Text></TouchableOpacity>
+        </View>
 
-          <TouchableOpacity style={styles.dangerBtn} onPress={() => Alert.alert('ACİL STOP', 'Robot tüm hareketleri durdurdu!')}>
-            <Text style={styles.btnText}>ACİL STOP</Text>
+        {/* MANUEL MIKNATISLI KİLİT TESTİ */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 15 }}>
+          <TouchableOpacity style={[styles.btnMini, { backgroundColor: '#8e44ad' }]} onPress={() => sendCommand('UNLOCK_CARGO')}>
+            <Text style={styles.btnText}>🔓 Kilit Aç</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity style={styles.secondaryBtn} onPress={() => setScreen('LOGIN')}>
-            <Text style={styles.btnText}>Çıkış Yap</Text>
+          <TouchableOpacity style={[styles.btnMini, { backgroundColor: '#2c3e50' }]} onPress={() => sendCommand('LOCK_CARGO')}>
+            <Text style={styles.btnText}>🔒 Kilitle</Text>
           </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
+        </View>
 
-  if (screen === 'USER') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.headerTitle}>Kurye Çağrı Paneli</Text>
+        <TouchableOpacity style={styles.emergencyBtn} onPress={() => sendCommand('EMERGENCY_STOP')}>
+          <Text style={styles.emergencyText}>ACİL STOP !</Text>
+        </TouchableOpacity>
 
-          <View style={styles.warningBox}>
-            <Text style={styles.warningText}>⚠️ LÜTFEN UYGULAMAYI KAPATMAYINIZ</Text>
-            <Text style={styles.subWarningText}>Robot konumu anlık güncellenmektedir.</Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Robotun Anlık Konumu</Text>
-            <Text style={styles.locationTag}>📍 {robotLocation}</Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Robot Çağır</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Başlangıç (Örn: Müdür Odası, 1. Kat Koridor)"
-              placeholderTextColor="#888"
-              value={startPoint}
-              onChangeText={setStartPoint}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Bitiş (Örn: Çay Ocağı, 204 Nolu Sınıf)"
-              placeholderTextColor="#888"
-              value={endPoint}
-              onChangeText={setEndPoint}
-            />
-            <TouchableOpacity style={styles.primaryBtn} onPress={handleCreateRequest}>
-              <Text style={styles.btnText}>Sıraya Ekle (Çağır)</Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity style={styles.secondaryBtn} onPress={() => setScreen('LOGIN')}>
-            <Text style={styles.btnText}>Çıkış Yap</Text>
+        <View style={styles.addUserBox}>
+          <Text style={styles.subTitle}>Öğretmen Hesabı Oluştur</Text>
+          <TextInput style={styles.inputMini} placeholder="Öğretmen Adı" onChangeText={setNewUsername} value={newUsername} />
+          <TextInput style={styles.inputMini} placeholder="Şifre Belirle" secureTextEntry onChangeText={setNewUserPass} value={newUserPass} />
+          <TouchableOpacity style={styles.btnPrimaryMini} onPress={handleAddUser}>
+            <Text style={styles.btnText}>HESAP AÇ</Text>
           </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
+        </View>
 
-  if (screen === 'ROBOT') {
-    return (
-      <SafeAreaView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.robotHeader}>ROBOT BEYNİ (AKTİF)</Text>
-          <Text style={styles.subWarningText}>Wi-Fi Sunucu & Type-C OTG Bağlantısı Çalışıyor</Text>
-
-          <View style={styles.cameraFrame}>
-            <Text style={styles.cameraText}>360° USB OTG Kamera Görüntüsü (Dahili)</Text>
-            <Text style={styles.tileText}>Sayılan Karo Sayısı: {tileCount}</Text>
-            <ActivityIndicator size="large" color="#00ff00" style={{ marginTop: 10 }} />
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Sistem ve Bağlantı Durumu</Text>
-            <Text style={styles.statusOk}>✓ USB Type-C OTG Hub: Bağlı</Text>
-            <Text style={styles.statusOk}>✓ Arduino Nano (Motor Sürücü): Hazır</Text>
-            <Text style={styles.statusOk}>✓ Wi-Fi Yerel Ağ Dinleniyor (Port 8080)</Text>
-            <Text style={styles.infoText}>Jiroskop Z-Açısı: {gyroData.z.toFixed(2)} rad/s</Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Mevcut Görev</Text>
-            {currentTask ? (
-              <View>
-                <Text style={styles.infoText}>Gönderen: {currentTask.sender}</Text>
-                <Text style={styles.infoText}>Rota: {currentTask.start} ➔ {currentTask.end}</Text>
-                <TouchableOpacity style={styles.actionBtn} onPress={triggerElevatorFingerbot}>
-                  <Text style={styles.btnText}>Wi-Fi Asansör Çağır (Fingerbot)</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.successBtn} onPress={() => handleCompleteCurrentTask(true)}>
-                  <Text style={styles.btnText}>Alıcı Onayladı (Teslim Et)</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <Text style={styles.infoText}>Kuyrukta Bekleyen Görev Yok.</Text>
-            )}
-          </View>
-
-          <TouchableOpacity style={styles.dangerBtn} onPress={() => setScreen('LOGIN')}>
-            <Text style={styles.btnText}>Robot Modundan Çık</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
+        <TouchableOpacity style={styles.btnBack} onPress={() => setScreen('LOGIN')}>
+          <Text style={styles.btnText}>ÇIKIŞ YAP</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f172a', paddingHorizontal: 15 },
-  scrollContent: { paddingVertical: 20 },
-  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#f8fafc', textAlign: 'center', marginVertical: 15 },
-  robotHeader: { fontSize: 26, fontWeight: 'bold', color: '#22c55e', textAlign: 'center', marginTop: 10 },
-  card: { backgroundColor: '#1e293b', borderRadius: 10, padding: 15, marginBottom: 15 },
-  cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#38bdf8', marginBottom: 10 },
-  input: { backgroundColor: '#334155', color: '#fff', borderRadius: 8, padding: 12, marginBottom: 10 },
-  primaryBtn: { backgroundColor: '#2563eb', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 5 },
-  secondaryBtn: { backgroundColor: '#475569', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 10 },
-  successBtn: { backgroundColor: '#16a34a', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 10 },
-  dangerBtn: { backgroundColor: '#dc2626', padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 10 },
-  actionBtn: { backgroundColor: '#d97706', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 10 },
-  btnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  warningBox: { backgroundColor: '#7f1d1d', padding: 12, borderRadius: 8, marginBottom: 15 },
-  warningText: { color: '#fca5a5', fontWeight: 'bold', textAlign: 'center' },
-  subWarningText: { color: '#cbd5e1', textAlign: 'center', fontSize: 12, marginTop: 3, marginBottom: 10 },
-  infoText: { color: '#e2e8f0', fontSize: 14, marginVertical: 4 },
-  locationTag: { color: '#4ade80', fontSize: 18, fontWeight: 'bold' },
-  statusOk: { color: '#4ade80', fontSize: 13, marginVertical: 2 },
-  cameraFrame: { height: 180, backgroundColor: '#0284c7', borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
-  cameraText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  tileText: { color: '#e0f2fe', fontSize: 12, marginTop: 5 }
-});
+  container: { flex: 1, backgroundColor: '#1a1a1a', padding: 20, paddingTop: 50, alignItems: 'center' },
+  headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#f1c40f', marginBottom: 5 },
+  subTitle: { fontSize: 14, color: '#fff', marginBottom: 15 },
+  statusBox: { padding: 8, borderWidth: 1, borderColor: '#555', borderRadius: 8, marginBottom: 15 },
+  statusCard: { width: '100%', backgroundColor: '#2c3e50', padding: 12, borderRadius: 8, marginBottom: 15, alignItems: 'center' },
+  cardTitle: { color: '#aaa', fontSize: 12, fontWeight: 'bold' },
+  cardStatus: { fontSize: 14, fontWeight: 'bold', marginTop: 4 },
+  input: { width: '100%', height: 45, backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 15, marginBottom: 12 },
+  btnPrimary: { width: '100%', height: 45, backgroundColor: '#2980b9', justifyContent: 'center', alignItems: 'center', borderRadius: 8 },
+  btnAction: { width: '100%', height: 50, backgroundColor: '#27ae60', justifyContent: 'center', alignItems: 'center', borderRadius: 8, marginBottom: 12 },
+  btnMini: { width: '48%', height: 45, justifyContent: 'center', alignItems: 'center', borderRadius: 8 },
+  btnBack: { width: '100%', height: 45, backgroundColor: '#7f8c8d', justifyContent: 'center', alignItems: 'center', borderRadius: 8, marginTop: 15 },
+  btnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+  telemetryBox: { width: '100%', flexDirection: 'row', justifyContent: 'space-around', backgroundColor: '#333', padding: 10, borderRadius: 8, marginBottom: 15 },
+  telemetryText: { color: '#00FF00', fontWeight: 'bold', fontSize: 12 },
+  dpad: { alignItems: 'center', marginBottom: 15 },
+  dpadRow: { flexDirection: 'row', marginVertical: 5 },
+  dpadBtn: { width: 60, height: 60, backgroundColor: '#34495e', justifyContent: 'center', alignItems: 'center', borderRadius: 30, marginHorizontal: 8 },
+  stopBtn: { backgroundColor: '#e67e22' },
+  emergencyBtn: { width: '100%', height: 50, backgroundColor: '#c0392b', justifyContent: 'center', alignItems: 'center', borderRadius: 8, marginBottom: 15, borderWidth: 2, borderColor: '#fff' },
+  emergencyText: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
+  addUserBox: { width: '100%', padding: 12, backgroundColor: '#2c3e50', borderRadius: 8 },
+  inputMini: { height: 38, backgroundColor: '#fff', borderRadius: 5, paddingHorizontal: 10, marginBottom: 8 },
+  btnPrimaryMini: { height: 38, backgroundColor: '#2980b9', justifyContent: 'center', alignItems: 'center', borderRadius: 5 }
+});});
