@@ -1,33 +1,83 @@
-name: Build Android APK (EAS Cloud)
+name: Kurye Robot Pro APK Build
 
 on:
+  push:
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Repoyu Klonla
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
+      - name: Node.js Kurulumu
         uses: actions/setup-node@v3
         with:
-          node-version: 18
+          node-version: '18'
 
-      - name: Setup EAS CLI
-        run: npm install -g eas-cli
+      - name: Java JDK 17 Kurulumu
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
-      - name: Install dependencies
+      - name: Paketleri Yükle
         run: npm install
 
-      - name: Link EAS Project
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: npx eas-cli project:init --non-interactive || true
+      - name: Expo Prebuild
+        run: npx expo prebuild --platform android --clean
 
-      - name: Trigger EAS Cloud Build
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas build --platform android --profile preview --non-interactive
+      - name: Gradle ile Release APK Derle
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew assembleRelease
+
+      - name: APK'yı GitHub'a Yükle
+        uses: actions/upload-artifact@v3
+        with:
+          name: KuryeRobotPro-APK
+          path: android/app/build/outputs/apk/release/app-release.apkname: Kurye Robot Pro APK Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repoyu Klonla
+        uses: actions/checkout@v3
+
+      - name: Node.js Kurulumu
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Java JDK 17 Kurulumu
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Paketleri Yükle
+        run: npm install
+
+      - name: Expo Prebuild
+        run: npx expo prebuild --platform android --clean
+
+      - name: Gradle ile Release APK Derle
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew assembleRelease
+
+      - name: APK'yı GitHub'a Yükle
+        uses: actions/upload-artifact@v3
+        with:
+          name: KuryeRobotPro-APK
+          path: android/app/build/outputs/apk/release/app-release.apk
